@@ -6,6 +6,9 @@
 # dotenv files
 .env
 
+# Throwaway C# fundamentals sandbox (not part of the FitForge product)
+/learning-sandbox/
+
 # User-specific files
 *.rsuser
 *.suo

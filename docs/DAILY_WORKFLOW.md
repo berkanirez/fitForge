@@ -51,6 +51,19 @@ After coding, explain:
 - how the flow works
 - what I should pay attention to
 
+I am completely new to the C#/.NET ecosystem — no assumed terminology, no assumed conventions, no assumed architecture knowledge. Define every new term the first time it comes up, in plain language, before using it again.
+
+## Step 5b - Write the Daily Log File
+
+Write `docs/daily-logs/day-XX.md` (zero-padded to match `docs/ROADMAP_40_DAYS.md`, e.g. `day-03.md`). This is a standalone written reference — after reading only this file I should understand what we did, why, and how, well enough to have zero follow-up questions. It must:
+
+1. Explain what we built, why, what it enables later, and what would break or be missing without it — theory and technical detail mixed as needed, "why" before "how".
+2. Define every new C#/.NET term the first time it's used (bridge to Node/KeystoneJS/GraphQL equivalents where that helps).
+3. Walk through every file created or changed that day, one at a time, **line by line** — not a summary.
+4. End with how to test/verify the result, and a common failure mode.
+
+Do this before moving on to anything else the same day.
+
 ## Step 6 - Test
 
 Tell me:
