@@ -19,8 +19,9 @@
 | 7 | Extension method (`this` parametresi) | ✅ İşlendi |
 | 8 | Dependency Injection / IoC container | ✅ İşlendi |
 | 9 | Async/await ve `Task<T>` | ✅ İşlendi |
-| — | `ChangeTracker` / `EntityState` | ⏳ Day 4'te işlenecek (SaveChangesAsync override'ı için gerekli) |
-| — | *(kalan ~82 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
+| 10 | Abstract class, method overriding (`virtual`/`override`) | ✅ İşlendi |
+| 11 | `ChangeTracker` / `EntityState` | ✅ İşlendi |
+| — | *(kalan ~80 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
 
 ---
 
@@ -885,17 +886,164 @@ Kısacası: SQL Server gibi "yavaş" (disk/network) bir şeyle her konuştuğumu
 
 ---
 
+## Kavram 10 — Abstract Class ve Method Overriding (`virtual`/`override`)
+
+### Neden öğrenmen lazım?
+
+Day 4'te yazacağımız `BaseEntity` ve `AuditableEntity`, **abstract** sınıflar olacak — yani kendilerinden doğrudan nesne üretilemeyecek, sadece onlardan türeyen gerçek entity'ler (Exercise, WorkoutLog...) üretilebilecek. Ayrıca `FitForgeDbContext`'te `SaveChangesAsync`'i **override** edeceğiz — EF Core'un hazır davranışının üstüne kendi mantığımızı ekleyeceğiz. Bu iki kelimeyi (`abstract`, `override`) bilmeden Day 4'ün kodunu okuyamazsın.
+
+### En basit tanım
+
+- **`abstract class`** = "bu sınıftan asla doğrudan `new` ile nesne üretilemez, sadece bir şablon/temel olarak var, ondan türeyen somut (concrete) sınıflar üretilebilir." Kavram 6'daki inheritance'ın bir adım ötesi: `Athlete` sınıfından doğrudan nesne üretebiliyorduk, ama `abstract` bir sınıftan üretemeyiz.
+- **`virtual`** = bir üst sınıfın metoduna konan işaret: "alt sınıflar isterse bu metodu değiştirebilir (override edebilir)."
+- **`override`** = alt sınıfın, üst sınıftaki `virtual` bir metodu **kendi versiyonuyla değiştirmesi**.
+
+### Örnek
+
+```csharp
+public abstract class Equipment
+{
+    public virtual string Describe() => "Generic equipment";
+}
+
+public class Dumbbell : Equipment
+{
+    public override string Describe() => "A pair of dumbbells";
+}
+```
+
+**Bilerek abstract sınıftan nesne üretmeyi denedim:**
+```csharp
+var badEquipment = new Equipment();
+```
+Hata:
+```
+error CS0144: 'Equipment' soyut türünün veya arabiriminin örneği oluşturulamıyor
+```
+C# net bir şekilde reddediyor — `Equipment` sadece bir şablon, gerçek bir "equipment" değil (hangi equipment olduğu belirsiz — dumbbell mı, barbell mı?).
+
+**Doğru kullanım:**
+```csharp
+var dumbbell = new Dumbbell();
+Console.WriteLine(dumbbell.Describe());
+```
+Çıktı:
+```
+A pair of dumbbells
+```
+`Dumbbell`, `Equipment`'ın genel `Describe()`'ını **kendi versiyonuyla değiştirdi** (override etti). `override` yazmadan `Describe()`'ı tekrar tanımlamaya çalışsan, C# hata verirdi çünkü üst sınıftaki metot `virtual` işaretlenmemiş olsaydı override edilemezdi.
+
+### FitForge'da nerede göreceğiz?
+
+Day 4'te:
+```csharp
+public abstract class BaseEntity
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+}
+```
+`BaseEntity`'den asla doğrudan nesne üretmeyeceğiz — sadece `Exercise : AuditableEntity`, `WorkoutLog : AuditableEntity` gibi gerçek entity'ler üzerinden.
+
+`FitForgeDbContext`'te de şunu yazacağız:
+```csharp
+public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+{
+    // ... audit alanlarını doldur ...
+    return await base.SaveChangesAsync(cancellationToken);
+}
+```
+`SaveChangesAsync`, EF Core'un `DbContext` sınıfında zaten `virtual` olarak tanımlı — biz onu `override` ederek "kaydetmeden önce şu ekstra işi de yap" diyoruz, sonra `base.SaveChangesAsync(...)` ile asıl EF Core'un yapması gereken işi de tetikliyoruz (tıpkı Kavram 6'daki `: base(name)` gibi — üst sınıfın kendi işini de çağırıyoruz, sadece constructor'da değil, bir metotta).
+
+---
+
+## Kavram 11 — `ChangeTracker` ve `EntityState`
+
+### Neden öğrenmen lazım?
+
+`SaveChangesAsync`'i override ettiğimizde, içine **ne yazacağımızı** bilmemiz gerekiyor — "hangi kayıt yeni eklendi, hangisi güncellendi, hangisi silinmeye çalışılıyor?" sorusunun cevabı `ChangeTracker` ve `EntityState`'te. Bu kavram olmadan Day 4'ün `SaveChangesAsync` override'ının içini yazamayız.
+
+### En basit tanım
+
+- **`ChangeTracker`** = `DbContext`'in, o ana kadar kendisine tanıttığın (okuduğun, eklediğin, sildiğin) **tüm nesneleri hafızasında not tuttuğu** yer. "Şu anda hangi nesnelerle ilgileniyorum, her birine ne oldu?" listesi.
+- **`EntityState`** = ChangeTracker'ın her nesne için tuttuğu **durum etiketi**: `Added` (yeni eklendi, henüz kaydedilmedi), `Modified` (var olan bir alanı değiştirildi), `Deleted` (silinmek üzere işaretlendi), `Unchanged` (hiçbir değişiklik yok).
+
+### Örnek — gerçek bir `DbContext` ile, ama SQL Server olmadan
+
+Bunu göstermek için gerçek bir EF Core `DbContext` kurduk, ama SQL Server'a bağlanmak yerine **bellekte** çalışan bir "sahte" veritabanı kullandık (`UseInMemoryDatabase`) — sadece bu kavramı göstermek için, gerçek projede kullanmayacağız.
+
+```csharp
+public class Note
+{
+    public int Id { get; set; }
+    public string Text { get; set; } = "";
+}
+
+public class SandboxDbContext : DbContext
+{
+    public DbSet<Note> Notes => Set<Note>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        => optionsBuilder.UseInMemoryDatabase("SandboxDb");
+}
+```
+
+```csharp
+using var sandboxContext = new SandboxDbContext();
+sandboxContext.Notes.Add(new Note { Id = 1, Text = "First" });
+sandboxContext.Notes.Add(new Note { Id = 2, Text = "Second" });
+await sandboxContext.SaveChangesAsync();   // ikisi de kaydedildi
+
+var first = sandboxContext.Notes.First(n => n.Id == 1);
+first.Text = "First (edited)";             // -> Modified
+
+var second = sandboxContext.Notes.First(n => n.Id == 2);
+sandboxContext.Notes.Remove(second);       // -> Deleted
+
+sandboxContext.Notes.Add(new Note { Id = 3, Text = "Third" });   // -> Added
+
+foreach (var entry in sandboxContext.ChangeTracker.Entries<Note>())
+{
+    Console.WriteLine($"{entry.Entity.Text} -> {entry.State}");
+}
+```
+Çıktı:
+```
+Third -> Added
+First (edited) -> Modified
+Second -> Deleted
+```
+`sandboxContext.ChangeTracker.Entries<Note>()` bize, o an takip edilen **her `Note` nesnesini ve durumunu** veriyor. `entry.Entity` gerçek nesnenin kendisi, `entry.State` ise `EntityState` enum değeri.
+
+### FitForge'da nerede göreceğiz?
+
+Day 4'te `SaveChangesAsync`'in içinde tam olarak bunu yapacağız:
+```csharp
+foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
+{
+    if (entry.State == EntityState.Added)
+        entry.Entity.CreatedAt = DateTime.UtcNow;
+    else if (entry.State == EntityState.Modified)
+        entry.Entity.UpdatedAt = DateTime.UtcNow;
+    else if (entry.State == EntityState.Deleted)
+    {
+        entry.State = EntityState.Modified;   // gerçekten silme, "soft delete" yap
+        entry.Entity.DeletedAt = DateTime.UtcNow;
+    }
+}
+```
+Dikkat et: `Deleted` durumundaki bir kaydı `Modified`'a **çevirebiliyoruz** — bu, "soft delete"in kalbi. EF Core, sen `Remove()` desen bile, biz `entry.State`'i elle `Modified`'a çevirirsek, veritabanından gerçekten silmez, sadece `DeletedAt` alanını günceller.
+
+---
+
 ## Roadmap Analizi Sonucu
 
-40 günlük roadmap'in tamamını tarayan arka plan analizi tamamlandı. Sonuç: yukarıdaki 9 kavram (ki 9.'su tam da bu analiz sayesinde eklendi) sağlam bir temel, ama roadmap'in tamamı için toplamda **92 kavram** gerekiyor. Hepsini şimdi öğrenmek yerine, geri kalanların **roadmap'te ilgili güne geldiğimizde**, o günün kendi "kodlamadan önce kavramı öğret" adımında işlenmesine karar verdik — CLAUDE.md'nin "gereksiz teoriyle boğma" kuralına uygun.
-
-**Tek acil not:** Day 4'te `DbContext.SaveChangesAsync()`'i override ederken `ChangeTracker` ve `EntityState` (hangi kayıtların eklendiğini/değiştiğini/silindiğini anlamak için) kavramlarına ihtiyacımız olacak — analiz bunun müfredatta unutulduğunu fark etti. Bunu ayrıca şimdi işlemiyoruz, tam Day 4'te, `SaveChangesAsync`'i yazarken öğreteceğiz.
+40 günlük roadmap'in tamamını tarayan arka plan analizi tamamlandı. Sonuç: yukarıdaki 11 kavram (9. ve 11.'si tam da bu analiz sayesinde eklendi) sağlam bir temel, ama roadmap'in tamamı için toplamda **92 kavram** gerekiyor. Hepsini şimdi öğrenmek yerine, geri kalanların **roadmap'te ilgili güne geldiğimizde**, o günün kendi "kodlamadan önce kavramı öğret" adımında işlenmesine karar verdik — CLAUDE.md'nin "gereksiz teoriyle boğma" kuralına uygun.
 
 Aşağıda, geri kalan kavramların roadmap'in hangi gününde gerekeceğinin tam listesi (referans için — şimdi okuman gerekmiyor, ilgili gün geldiğinde buraya bakabiliriz):
 
 | Gün | Kavramlar |
 |---|---|
-| 4 | ChangeTracker/EntityState, abstract class, method overriding (virtual/override), Guid, DateTime/DateOnly/TimeSpan, EF Core Fluent API, global query filters, data annotation attribute'ları |
+| 4 | Guid, DateTime/DateOnly/TimeSpan, EF Core Fluent API, global query filters, data annotation attribute'ları |
 | 5 | Delegate (Func/Action), try/catch & özel exception sınıfları, global exception middleware, ProblemDetails, pattern matching/switch expression, record'lar |
 | 6 | ASP.NET Identity (UserManager/RoleManager/SignInManager), IServiceScope ile başlangıç seed'i, primary constructor, DTO deseni |
 | 7 | JWT yapısı, Claims/ClaimsPrincipal, [Authorize], Options pattern, FluentValidation |
