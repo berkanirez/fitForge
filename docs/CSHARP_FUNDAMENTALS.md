@@ -21,7 +21,10 @@
 | 9 | Async/await ve `Task<T>` | ✅ İşlendi |
 | 10 | Abstract class, method overriding (`virtual`/`override`) | ✅ İşlendi |
 | 11 | `ChangeTracker` / `EntityState` | ✅ İşlendi |
-| — | *(kalan ~80 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
+| 12 | Delegate (`Func`/`Action`) | ✅ İşlendi |
+| 13 | Pattern matching / switch expression | ✅ İşlendi |
+| 14 | Record'lar | ✅ İşlendi |
+| — | *(kalan ~77 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
 
 ---
 
@@ -1035,16 +1038,150 @@ Dikkat et: `Deleted` durumundaki bir kaydı `Modified`'a **çevirebiliyoruz** �
 
 ---
 
+## Kavram 12 — Delegate (`Func`/`Action`)
+
+### Neden öğrenmen lazım?
+
+Day 5'te ASP.NET Core'un **middleware pipeline**'ını (istek işleme zinciri) kuracağız. Middleware'in kendisi, arka planda bir **delegate zinciri** — yani "bir metodu, veri gibi bir değişkende taşımak" mantığı. Bunu bilmeden middleware kodunu okuyamayız.
+
+### En basit tanım
+
+**Delegate**, bir metodu (fonksiyonu) bir **değişkende tutabilme** yeteneği. JS'te fonksiyonları değişkene atayabilmene (`const add = (a, b) => a + b;`) çok benziyor — C#'ta bunun için hazır iki tip var:
+- **`Func<...>`** — bir değer **döndüren** bir metodu tutar. Son tip parametresi dönüş tipidir: `Func<int, int, int>` = "iki `int` alır, bir `int` döndürür."
+- **`Action<...>`** — hiçbir şey **döndürmeyen** bir metodu tutar.
+
+### Örnek
+
+```csharp
+Func<int, int, int> add = (a, b) => a + b;
+Console.WriteLine($"add(2, 3) = {add(2, 3)}");
+
+Action<string> announce = message => Console.WriteLine($"Announcing: {message}");
+announce("Workout started");
+```
+Çıktı:
+```
+add(2, 3) = 5
+Announcing: Workout started
+```
+`add` bir değişken ama içinde bir **metot** taşıyor — onu normal bir metot gibi `add(2, 3)` diye çağırabiliyoruz.
+
+### FitForge'da nerede göreceğiz?
+
+Day 5'te yazacağımız her middleware, aslında `RequestDelegate` tipinde bir parametre alır — `RequestDelegate`, "isteği işleyip, sıradaki adıma geç" diyen bir delegate. Kendi exception-handling middleware'imiz şuna benzeyecek:
+```csharp
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next(context);   // "next", zincirdeki SIRADAKI adımı temsil eden bir delegate
+    }
+    catch (Exception ex)
+    {
+        // hatayı yakala, standart JSON cevabı dön
+    }
+});
+```
+`next`, tam olarak `add`/`announce` gibi bir delegate — sadece "zincirdeki bir sonraki adımı çağır" işini yapıyor.
+
+---
+
+## Kavram 13 — Pattern Matching / Switch Expression
+
+### Neden öğrenmen lazım?
+
+Day 5'te "hangi exception fırlatıldıysa, hangi HTTP durum koduna çevrileceğine" karar vereceğiz (`NotFoundException` → 404, yetkisiz erişim → 401, bilinmeyen hata → 500). Bunu yazmanın en temiz yolu **switch expression**.
+
+### En basit tanım
+
+Klasik `switch` **deyimi** (statement) satır satır kod bloklarıyla çalışır. **Switch expression** ise daha kısa: "şu değere göre, doğrudan bir **sonuç** üret" der — bir if/else zincirinin daha kısa, daha okunaklı hâli. `ex switch { Tip1 => sonuç1, Tip2 => sonuç2, _ => varsayılan }` şeklinde, hem **değere** hem **tipe** göre eşleştirme yapabilirsin (buna "pattern matching" deniyor — "hangi kalıba uyuyor?").
+
+### Örnek
+
+```csharp
+public static class ExceptionMapper
+{
+    public static ErrorResponse Map(Exception ex) => ex switch
+    {
+        NotFoundException => new ErrorResponse(404, ex.Message),
+        UnauthorizedAccessException => new ErrorResponse(401, ex.Message),
+        _ => new ErrorResponse(500, "An unexpected error occurred.")
+    };
+}
+```
+```csharp
+var error1 = ExceptionMapper.Map(new NotFoundException("Exercise not found"));
+var error2 = ExceptionMapper.Map(new InvalidOperationException("Something broke"));
+Console.WriteLine($"{error1.StatusCode}: {error1.Message}");
+Console.WriteLine($"{error2.StatusCode}: {error2.Message}");
+```
+Çıktı:
+```
+404: Exercise not found
+500: An unexpected error occurred.
+```
+`ex switch { NotFoundException => ..., ... }` — burada **tipe** göre eşleşiyoruz: "eğer `ex`'in gerçek tipi `NotFoundException` ise". `_` ise "hiçbiri uymadıysa" (JS'teki `default` gibi).
+
+### FitForge'da nerede göreceğiz?
+
+Day 5'te, global exception middleware'imizin içinde tam olarak bu deseni kullanacağız — hangi exception tipi fırlatıldıysa, ona uygun HTTP durum kodunu ve mesajı bu şekilde seçeceğiz.
+
+---
+
+## Kavram 14 — Record'lar
+
+### Neden öğrenmen lazım?
+
+Day 5'te yazacağımız standart hata cevabı modelini (`ErrorResponse`), ve Day 11'den itibaren yazacağımız **her DTO**'yu (request/response nesnelerini) genelde `record` olarak yazacağız — `class` değil. Aradaki farkı bilmen lazım.
+
+### En basit tanım
+
+**`record`**, DTO'lar için özel olarak tasarlanmış, kısa ve **varsayılan olarak değişmez (immutable)** bir tip. İki önemli farkı var:
+1. **Değer bazlı eşitlik:** İki `record` nesnesi, içindeki **değerler** aynıysa `==` ile eşit sayılır — normal `class`'larda `==` sadece "aynı nesne mi" (referans) diye bakar, değerler aynı olsa bile iki farklı nesne asla eşit sayılmaz.
+2. **Kısa yazım:** `public record ErrorResponse(int StatusCode, string Message);` — tek satırda, hem sınıfı hem de constructor'ı hem de property'leri tanımlar.
+
+### Örnek
+
+```csharp
+public record ErrorResponse(int StatusCode, string Message);
+```
+```csharp
+var error1 = ExceptionMapper.Map(new NotFoundException("Exercise not found"));
+var error3 = new ErrorResponse(404, "Exercise not found");
+Console.WriteLine($"error1 == error3: {error1 == error3}");
+```
+Çıktı:
+```
+error1 == error3: True
+```
+`error1` ve `error3` **tamamen farklı iki nesne** (`new` ile ayrı ayrı üretildiler) ama içindeki değerler aynı olduğu için `==` `True` döndü. Normal bir `class` ile bu `False` olurdu (Kavram 1'deki `Exercise` class'ıyla dener, `==` referans karşılaştırır).
+
+**Bilerek bir record'un özelliğini oluşturduktan sonra değiştirmeyi denedim:**
+```csharp
+error1.StatusCode = 500;
+```
+Hata:
+```
+error CS8852: 'ErrorResponse.StatusCode' yalnızca init özelliği veya dizin oluşturucusu, yalnızca bir nesne başlatıcısında veya bir örnek oluşturucusundaki ya da 'init' erişimcisindeki 'this' üzerinde atanabilir.
+```
+Record'un property'leri, oluşturulduktan **sonra** değiştirilemez (`init`-only) — bu bilinçli bir tasarım: bir DTO, oluşturulduktan sonra kimse tarafından "sessizce" değiştirilemesin istiyoruz. Değiştirmek istersen, yeni bir `record` üretirsin (`with` ifadesiyle — ileride göreceğiz), var olanı asla mutasyona uğratmazsın.
+
+### FitForge'da nerede göreceğiz?
+
+Day 5'te `ErrorResponse` (ya da benzeri bir standart hata modeli) bir `record` olacak. Day 11'den itibaren `LoginRequest`, `LoginResponse`, `ExerciseDto` gibi neredeyse her DTO da `record` olarak yazılacak — çünkü bunlar "bir isteğin/cevabın anlık fotoğrafı", kimsenin sessizce değiştirmemesi gereken, sabit veri paketleri.
+
+---
+
 ## Roadmap Analizi Sonucu
 
-40 günlük roadmap'in tamamını tarayan arka plan analizi tamamlandı. Sonuç: yukarıdaki 11 kavram (9. ve 11.'si tam da bu analiz sayesinde eklendi) sağlam bir temel, ama roadmap'in tamamı için toplamda **92 kavram** gerekiyor. Hepsini şimdi öğrenmek yerine, geri kalanların **roadmap'te ilgili güne geldiğimizde**, o günün kendi "kodlamadan önce kavramı öğret" adımında işlenmesine karar verdik — CLAUDE.md'nin "gereksiz teoriyle boğma" kuralına uygun.
+40 günlük roadmap'in tamamını tarayan arka plan analizi tamamlandı. Sonuç: yukarıdaki 14 kavram (9. ve 11.'si tam da bu analiz sayesinde eklendi) sağlam bir temel, ama roadmap'in tamamı için toplamda **92 kavram** gerekiyor. Hepsini şimdi öğrenmek yerine, geri kalanların **roadmap'te ilgili güne geldiğimizde**, o günün kendi "kodlamadan önce kavramı öğret" adımında işlenmesine karar verdik — CLAUDE.md'nin "gereksiz teoriyle boğma" kuralına uygun.
 
 Aşağıda, geri kalan kavramların roadmap'in hangi gününde gerekeceğinin tam listesi (referans için — şimdi okuman gerekmiyor, ilgili gün geldiğinde buraya bakabiliriz):
 
 | Gün | Kavramlar |
 |---|---|
 | 4 | Guid, DateTime/DateOnly/TimeSpan, EF Core Fluent API, global query filters, data annotation attribute'ları |
-| 5 | Delegate (Func/Action), try/catch & özel exception sınıfları, global exception middleware, ProblemDetails, pattern matching/switch expression, record'lar |
+| 5 | try/catch & özel exception sınıfları (kısa), middleware pipeline, ProblemDetails — Day 5'in kendi anlatımında |
 | 6 | ASP.NET Identity (UserManager/RoleManager/SignInManager), IServiceScope ile başlangıç seed'i, primary constructor, DTO deseni |
 | 7 | JWT yapısı, Claims/ClaimsPrincipal, [Authorize], Options pattern, FluentValidation |
 | 8 | Navigation property'ler, collection tipleri, Include()/eager loading, IQueryable vs IEnumerable, LINQ, güvenli rastgele üretim |
