@@ -1,4 +1,6 @@
+using FitForge.Infrastructure.Identity;
 using FitForge.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +16,10 @@ public static class DependencyInjection
 
         services.AddDbContext<FitForgeDbContext>(options =>
             options.UseSqlServer(connectionString));
+
+        services.AddIdentity<ApplicationUser, IdentityRole>()
+            .AddEntityFrameworkStores<FitForgeDbContext>()
+            .AddDefaultTokenProviders();
 
         return services;
     }

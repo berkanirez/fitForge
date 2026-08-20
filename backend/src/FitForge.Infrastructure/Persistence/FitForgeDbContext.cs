@@ -1,9 +1,11 @@
 using FitForge.Domain.Common;
+using FitForge.Infrastructure.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace FitForge.Infrastructure.Persistence;
 
-public class FitForgeDbContext : DbContext
+public class FitForgeDbContext : IdentityDbContext<ApplicationUser>
 {
     public FitForgeDbContext(DbContextOptions<FitForgeDbContext> options)
         : base(options)

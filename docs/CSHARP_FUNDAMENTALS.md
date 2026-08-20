@@ -24,7 +24,8 @@
 | 12 | Delegate (`Func`/`Action`) | ✅ İşlendi |
 | 13 | Pattern matching / switch expression | ✅ İşlendi |
 | 14 | Record'lar | ✅ İşlendi |
-| — | *(kalan ~77 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
+| 15 | `IServiceScope` / scoped servisler | ✅ İşlendi |
+| — | *(kalan ~76 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
 
 ---
 
@@ -1172,9 +1173,54 @@ Day 5'te `ErrorResponse` (ya da benzeri bir standart hata modeli) bir `record` o
 
 ---
 
+## Kavram 15 — `IServiceScope` / Scoped Servisler
+
+### Neden öğrenmen lazım?
+
+Day 6'da uygulama başlarken (herhangi bir HTTP isteği olmadan) rolleri (User, Coach, Admin) veritabanına "seed" edeceğiz (ilk kez oluşturacağız). Ama `DbContext` ve Identity servisleri **"scoped"** olarak kayıtlı — yani normalde her HTTP isteği için ayrı bir örnek üretilirler. Uygulama başlangıcında **hiçbir HTTP isteği yok** — o zaman bu servisleri nasıl kullanacağız? İşte bu kavram tam olarak bu soruyu cevaplıyor.
+
+### En basit tanım
+
+Kavram 8'de "Singleton" ve "Transient" servis ömürlerinden (lifetime) bahsetmiştik, üçüncüsü **`Scoped`**: "bir HTTP isteği boyunca hep aynı nesne, ama farklı istekler farklı nesne alır." Bunu container'a söylediğinde, container "bu servisi root'tan (en üst seviyeden) doğrudan veremem, önce bir **scope** (kapsam/oturum) açman gerekir" der. **`IServiceScope`**, "yeni bir oturum başlat" demenin yolu — `CreateScope()` ile açılır, `using` ile (Kavram 6'daki `IDisposable` mantığı) otomatik kapanır.
+
+### Örnek — önce hatasını görelim
+
+```csharp
+var scopedServices = new ServiceCollection();
+scopedServices.AddScoped<WorkoutSession>();
+var rootProvider = scopedServices.BuildServiceProvider(validateScopes: true);
+
+var badSession = rootProvider.GetRequiredService<WorkoutSession>();
+```
+Hata:
+```
+System.InvalidOperationException: Cannot resolve scoped service 'Fitness.WorkoutSession' from root provider.
+```
+Container net bir şekilde reddediyor: "`WorkoutSession` scoped bir servis, sana onu **doğrudan** (kök seviyeden) veremem — önce bir scope aç."
+
+**Düzeltilmiş hâli:**
+```csharp
+using var scope = rootProvider.CreateScope();
+var session = scope.ServiceProvider.GetRequiredService<WorkoutSession>();
+Console.WriteLine($"Session: {session.SessionId}");
+```
+Çıktı: `Session: 20447ced-d52d-...` (her çalıştırmada farklı bir Guid).
+
+### FitForge'da nerede göreceğiz?
+
+Day 6'da, `Program.cs`'te uygulama ayağa kalkarken (henüz hiçbir HTTP isteği yokken) rolleri seed edeceğiz, tam olarak bu desenle:
+```csharp
+using var scope = app.Services.CreateScope();
+var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+// ... rolleri oluştur ...
+```
+Normal bir controller'da bu scope'u hiç düşünmemize gerek yok — ASP.NET Core, her HTTP isteği için **otomatik olarak** bir scope açıp kapatıyor. Ama başlangıç kodu bir HTTP isteği olmadığı için, bu scope'u **elle** açmamız gerekiyor — az önce yaptığımız tam olarak bu.
+
+---
+
 ## Roadmap Analizi Sonucu
 
-40 günlük roadmap'in tamamını tarayan arka plan analizi tamamlandı. Sonuç: yukarıdaki 14 kavram (9. ve 11.'si tam da bu analiz sayesinde eklendi) sağlam bir temel, ama roadmap'in tamamı için toplamda **92 kavram** gerekiyor. Hepsini şimdi öğrenmek yerine, geri kalanların **roadmap'te ilgili güne geldiğimizde**, o günün kendi "kodlamadan önce kavramı öğret" adımında işlenmesine karar verdik — CLAUDE.md'nin "gereksiz teoriyle boğma" kuralına uygun.
+40 günlük roadmap'in tamamını tarayan arka plan analizi tamamlandı. Sonuç: yukarıdaki 15 kavram (9. ve 11.'si tam da bu analiz sayesinde eklendi) sağlam bir temel, ama roadmap'in tamamı için toplamda **92 kavram** gerekiyor. Hepsini şimdi öğrenmek yerine, geri kalanların **roadmap'te ilgili güne geldiğimizde**, o günün kendi "kodlamadan önce kavramı öğret" adımında işlenmesine karar verdik — CLAUDE.md'nin "gereksiz teoriyle boğma" kuralına uygun.
 
 Aşağıda, geri kalan kavramların roadmap'in hangi gününde gerekeceğinin tam listesi (referans için — şimdi okuman gerekmiyor, ilgili gün geldiğinde buraya bakabiliriz):
 
@@ -1182,7 +1228,7 @@ Aşağıda, geri kalan kavramların roadmap'in hangi gününde gerekeceğinin ta
 |---|---|
 | 4 | Guid, DateTime/DateOnly/TimeSpan, EF Core Fluent API, global query filters, data annotation attribute'ları |
 | 5 | try/catch & özel exception sınıfları (kısa), middleware pipeline, ProblemDetails — Day 5'in kendi anlatımında |
-| 6 | ASP.NET Identity (UserManager/RoleManager/SignInManager), IServiceScope ile başlangıç seed'i, primary constructor, DTO deseni |
+| ~~6~~ | ~~ASP.NET Identity, IdentityResult, primary constructor, DTO deseni~~ — işlendi, bkz. `docs/daily-logs/day-06.md` |
 | 7 | JWT yapısı, Claims/ClaimsPrincipal, [Authorize], Options pattern, FluentValidation |
 | 8 | Navigation property'ler, collection tipleri, Include()/eager loading, IQueryable vs IEnumerable, LINQ, güvenli rastgele üretim |
 | 9-10 | Enum'lar, rol/policy bazlı authorization |
