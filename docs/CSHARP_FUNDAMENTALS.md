@@ -27,7 +27,10 @@
 | 15 | `IServiceScope` / scoped servisler | ✅ İşlendi |
 | 16 | Options pattern (`IOptions<T>`) | ✅ İşlendi |
 | 17 | Zincirleme noktalar (`a.b.c` — property vs metod erişimi) | ✅ İşlendi |
-| — | *(kalan ~74 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
+| 18 | Navigation property / one-to-many + `Include()` | ✅ İşlendi |
+| 19 | `IQueryable` vs `IEnumerable` (deferred execution) | ✅ İşlendi |
+| 20 | Kriptografik olarak güvenli rastgele üretim | ✅ İşlendi |
+| — | *(kalan ~71 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
 
 ---
 
@@ -1346,6 +1349,119 @@ Bu proje boyunca yazdığımız (ve yazacağımız) **her** `builder.X.Y(...)`, 
 
 ---
 
+## Kavram 18 — Navigation Property / One-to-Many + `Include()`
+
+### Neden öğrenmen lazım?
+
+Day 8'de bir kullanıcının **birden fazla** refresh token'ı olabilecek (her cihaz/tarayıcı için bir tane). Bunu EF Core'da modellemenin yolu "navigation property" — ve bunu doğru okumazsan, veri "kayboluyormuş" gibi görünür.
+
+### En basit tanım
+
+Bir `SandboxUser`'ın, birden fazla `SandboxRefreshToken`'ı olabilir — buna **one-to-many (bire-çok) ilişki** deniyor. C#'ta bunu, `User` sınıfının içine bir liste (`List<SandboxRefreshToken>`) koyarak ifade ediyoruz — buna **navigation property** deniyor, çünkü bu özellik üzerinden ilişkili kayıtlara "gidebiliyorsun" (navigate).
+
+```csharp
+public class SandboxUser
+{
+    public int Id { get; set; }
+    public string Email { get; set; } = "";
+    public List<SandboxRefreshToken> RefreshTokens { get; set; } = [];
+}
+```
+
+### Tuzak: Include olmadan, ilişkili veri **gelmez**
+
+```csharp
+using var freshContext1 = new SandboxDbContext();
+var loadedWithoutInclude = await freshContext1.Users.FirstAsync(u => u.Email == "coach@example.com");
+Console.WriteLine($"Include OLMADAN token sayısı: {loadedWithoutInclude.RefreshTokens.Count}");
+```
+Çıktı: `Include OLMADAN token sayısı: 0` — **veritabanında gerçekten 2 token var**, ama EF Core onları bize otomatik getirmedi! EF Core, senden **açıkça istemedikçe**, ilişkili tabloları yüklemiyor (performans için — her sorguda gereksiz veri çekmemek amacıyla).
+
+**Düzeltilmiş hâli:**
+```csharp
+var loadedWithInclude = await freshContext2.Users
+    .Include(u => u.RefreshTokens)
+    .FirstAsync(u => u.Email == "coach@example.com");
+Console.WriteLine($"Include İLE token sayısı: {loadedWithInclude.RefreshTokens.Count}");
+```
+Çıktı: `Include İLE token sayısı: 2` — `.Include(u => u.RefreshTokens)`, EF Core'a "bu sorguda, kullanıcıyla birlikte token'larını da getir" diyor.
+
+### FitForge'da nerede göreceğiz?
+
+Day 8'de `ApplicationUser`'a bir `RefreshTokens` koleksiyonu ekleyeceğiz (ya da ayrı bir tablo, kullanıcıya bağlı). Bir kullanıcının refresh token'larına erişmemiz gerektiğinde, `.Include(u => u.RefreshTokens)` yazmayı unutursak, "token bulunamadı" gibi yanlış bir hataya düşebiliriz — veri orada olsa bile.
+
+---
+
+## Kavram 19 — `IQueryable` vs `IEnumerable` (Deferred Execution)
+
+### Neden öğrenmen lazım?
+
+Bu, EF Core ile çalışırken düşülen en klasik tuzaklardan biri — "ne zaman gerçekten veritabanına gidiyoruz" sorusunun cevabı.
+
+### En basit tanım
+
+- **`IQueryable<T>`** — henüz **çalışmamış bir sorgu tarifi**. `.Where(...)` eklemek, tarife bir satır daha eklemek gibi — hâlâ hiçbir şey veritabanına gitmedi.
+- Sorgu, ancak **`ToListAsync()`, `FirstAsync()`** gibi bir "materialize et" (gerçekleştir) çağrısı yapıldığında **gerçekten çalışır**. Buna **deferred execution (geciktirilmiş çalıştırma / "tembel" çalışma)** deniyor.
+- **`IEnumerable<T>`** (ya da `List<T>` gibi zaten "donmuş" bir sonuç) — artık **bellekte, sabit** bir veri. Üzerinde yeni bir `.Where()` çalıştırsan, veritabanına hiç gitmez, sadece bellekteki listeyi süzer.
+
+### Örnek — sorgu ne zaman "gerçekten" çalışıyor?
+
+```csharp
+IQueryable<SandboxUser> pendingQuery = sandboxContext.Users.Where(u => u.Email.Contains("example.com"));
+
+// Sorguyu TANIMLADIKTAN SONRA veritabanına yeni bir kayıt ekliyoruz:
+sandboxContext.Users.Add(new SandboxUser { Email = "late-arrival@example.com" });
+await sandboxContext.SaveChangesAsync();
+
+// Şimdi sorguyu ÇALIŞTIRALIM:
+var queryResult = await pendingQuery.ToListAsync();
+Console.WriteLine($"IQueryable sonucu: {queryResult.Count} kullanıcı - yeni eklenen DAHİL");
+```
+Çıktı: `IQueryable sonucu: 2 kullanıcı - yeni eklenen DAHİL` — `pendingQuery`'i **tanımladığımız an değil**, `ToListAsync()` çağırdığımız an sorgu gerçekten çalıştı. Bu yüzden araya eklediğimiz yeni kayıt da sonuca dahil oldu — sorgu "geç kalmadı", çünkü aslında hiç "erken" çalışmamıştı.
+
+**Karşılaştıralım — önceden "dondurulmuş" bir sonuç:**
+```csharp
+var alreadyMaterialized = await sandboxContext.Users.Where(u => u.Email.Contains("example.com")).ToListAsync();
+sandboxContext.Users.Add(new SandboxUser { Email = "too-late@example.com" });
+await sandboxContext.SaveChangesAsync();
+Console.WriteLine($"Zaten donmuş liste: {alreadyMaterialized.Count} kullanıcı - yeni eklenen DAHİL DEĞİL");
+```
+Burada `ToListAsync()`'i **daha önce** çağırdık — `alreadyMaterialized` artık sabit bir liste, veritabanıyla hiçbir bağlantısı yok. Sonradan eklenen kayıt, bu listeye hiç yansımıyor.
+
+### FitForge'da nerede göreceğiz?
+
+Refresh token'ı doğrularken (Day 8), "bu token veritabanında var mı, geçerli mi" diye sorgu yazacağız — `IQueryable`'ı ne zaman gerçekten çalıştırdığımızı bilmek, yanlışlıkla eski/güncel olmayan veriyle çalışmamızı önleyecek.
+
+---
+
+## Kavram 20 — Kriptografik Olarak Güvenli Rastgele Üretim
+
+### Neden öğrenmen lazım?
+
+Refresh token'ın kendisi, tahmin edilemez, rastgele bir metin olmalı — biri onu tahmin edebilirse, o kullanıcı gibi davranabilir.
+
+### En basit tanım
+
+C#'ın normal `Random` sınıfı **kriptografik olarak güvenli değil** — tahmin edilebilir bir algoritma kullanır (oyunlar için yeterli, güvenlik için değil). Güvenlik açısından hassas rastgelelik için `System.Security.Cryptography.RandomNumberGenerator` kullanılır.
+
+### Örnek
+
+```csharp
+var randomBytes = RandomNumberGenerator.GetBytes(32);
+var refreshTokenValue = Convert.ToBase64String(randomBytes);
+Console.WriteLine($"Güvenli refresh token: {refreshTokenValue}");
+```
+Çıktı (her çalıştırmada farklı): `Güvenli refresh token: QCSKnsPuRoe8VD5TMhC+igd2eofAC6Hgd+cqk4G+IYU=`
+
+- `RandomNumberGenerator.GetBytes(32)` — 32 **byte**'lık (256 bit), kriptografik olarak güvenli rastgele veri üretir.
+- `Convert.ToBase64String(...)` — bu ham byte'ları, metin olarak taşınabilir (JSON'a koyabileceğimiz, URL'de kullanabileceğimiz) bir formata çeviriyor.
+
+### FitForge'da nerede göreceğiz?
+
+Day 8'de, her refresh token'ı tam olarak bu şekilde üreteceğiz.
+
+---
+
 ## Roadmap Analizi Sonucu
 
 40 günlük roadmap'in tamamını tarayan arka plan analizi tamamlandı. Sonuç: yukarıdaki 15 kavram (9. ve 11.'si tam da bu analiz sayesinde eklendi) sağlam bir temel, ama roadmap'in tamamı için toplamda **92 kavram** gerekiyor. Hepsini şimdi öğrenmek yerine, geri kalanların **roadmap'te ilgili güne geldiğimizde**, o günün kendi "kodlamadan önce kavramı öğret" adımında işlenmesine karar verdik — CLAUDE.md'nin "gereksiz teoriyle boğma" kuralına uygun.
@@ -1358,7 +1474,7 @@ Aşağıda, geri kalan kavramların roadmap'in hangi gününde gerekeceğinin ta
 | 5 | try/catch & özel exception sınıfları (kısa), middleware pipeline, ProblemDetails — Day 5'in kendi anlatımında |
 | ~~6~~ | ~~ASP.NET Identity, IdentityResult, primary constructor, DTO deseni~~ — işlendi, bkz. `docs/daily-logs/day-06.md` |
 | ~~7~~ | ~~JWT yapısı, Claims/ClaimsPrincipal, [Authorize], Options pattern, FluentValidation~~ — işlendi, bkz. `docs/daily-logs/day-07.md` |
-| 8 | Navigation property'ler, collection tipleri, Include()/eager loading, IQueryable vs IEnumerable, LINQ, güvenli rastgele üretim |
+| ~~8~~ | ~~Navigation property'ler, collection tipleri, Include()/eager loading, IQueryable vs IEnumerable, LINQ, güvenli rastgele üretim~~ — işlendi, bkz. `docs/daily-logs/day-08.md` |
 | 9-10 | Enum'lar, rol/policy bazlı authorization |
 | 11-16 | Attribute routing, ActionResult, value object, EF Core seed data, projection/Select(), aggregate root, cascade delete |
 | 17-20 | HashSet & LINQ set işlemleri, xUnit [Fact]/[Theory], FluentAssertions, Arrange-Act-Assert |

@@ -16,7 +16,7 @@ public class JwtTokenGenerator : IJwtTokenGenerator
         _options = options.Value;
     }
 
-    public LoginResponse CreateToken(string userId, string email, IEnumerable<string> roles)
+    public AccessTokenResult CreateToken(string userId, string email, IEnumerable<string> roles)
     {
         var claims = new List<Claim>
         {
@@ -39,6 +39,6 @@ public class JwtTokenGenerator : IJwtTokenGenerator
 
         var accessToken = new JwtSecurityTokenHandler().WriteToken(token);
 
-        return new LoginResponse(accessToken, expiresAtUtc);
+        return new AccessTokenResult(accessToken, expiresAtUtc);
     }
 }

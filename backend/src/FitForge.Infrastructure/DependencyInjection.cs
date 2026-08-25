@@ -26,6 +26,7 @@ public static class DependencyInjection
 
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
         services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
+        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
 
         services.AddValidatorsFromAssemblyContaining<LoginRequestValidator>();
 

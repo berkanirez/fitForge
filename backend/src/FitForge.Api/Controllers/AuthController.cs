@@ -15,6 +15,7 @@ public class AuthController(
     UserManager<ApplicationUser> userManager,
     SignInManager<ApplicationUser> signInManager,
     IJwtTokenGenerator jwtTokenGenerator,
+    IRefreshTokenService refreshTokenService,
     IValidator<LoginRequest> loginRequestValidator) : ControllerBase
 {
     [HttpPost("register")]
@@ -60,9 +61,32 @@ public class AuthController(
         }
 
         var roles = await userManager.GetRolesAsync(user);
-        var loginResponse = jwtTokenGenerator.CreateToken(user.Id, user.Email!, roles);
+        var accessToken = jwtTokenGenerator.CreateToken(user.Id, user.Email!, roles);
+        var refreshToken = await refreshTokenService.CreateAsync(user.Id, cancellationToken);
 
-        return Ok(loginResponse);
+        return Ok(new LoginResponse(accessToken.AccessToken, accessToken.ExpiresAtUtc, refreshToken));
+    }
+
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh(RefreshRequest request, CancellationToken cancellationToken)
+    {
+        var rotation = await refreshTokenService.RotateAsync(request.RefreshToken, cancellationToken);
+
+        if (!rotation.Succeeded || rotation.UserId is null || rotation.NewToken is null)
+        {
+            return Unauthorized();
+        }
+
+        var user = await userManager.FindByIdAsync(rotation.UserId);
+        if (user is null)
+        {
+            return Unauthorized();
+        }
+
+        var roles = await userManager.GetRolesAsync(user);
+        var accessToken = jwtTokenGenerator.CreateToken(user.Id, user.Email!, roles);
+
+        return Ok(new LoginResponse(accessToken.AccessToken, accessToken.ExpiresAtUtc, rotation.NewToken));
     }
 
     [Authorize]

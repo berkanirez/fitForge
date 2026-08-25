@@ -12,6 +12,8 @@ public class FitForgeDbContext : IdentityDbContext<ApplicationUser>
     {
     }
 
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
