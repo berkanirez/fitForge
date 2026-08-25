@@ -25,7 +25,9 @@
 | 13 | Pattern matching / switch expression | ✅ İşlendi |
 | 14 | Record'lar | ✅ İşlendi |
 | 15 | `IServiceScope` / scoped servisler | ✅ İşlendi |
-| — | *(kalan ~76 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
+| 16 | Options pattern (`IOptions<T>`) | ✅ İşlendi |
+| 17 | Zincirleme noktalar (`a.b.c` — property vs metod erişimi) | ✅ İşlendi |
+| — | *(kalan ~74 kavram)* | 📋 Roadmap'te ilgili güne geldiğimizde işlenecek — bkz. en alttaki tablo |
 
 ---
 
@@ -1218,6 +1220,132 @@ Normal bir controller'da bu scope'u hiç düşünmemize gerek yok — ASP.NET Co
 
 ---
 
+## Kavram 16 — Options Pattern (`IOptions<T>`)
+
+### Neden öğrenmen lazım?
+
+Day 7'de JWT üretmek için bir "gizli anahtar", "issuer", "süre" gibi ayarlara ihtiyacımız olacak. Bunları appsettings.json/User Secrets'tan okuyup, güvenli, tip-güvenli (type-safe) bir şekilde koda taşımanın standart yolu bu desen.
+
+### En basit tanım
+
+appsettings.json'daki bir bölümü (örn. `"Jwt": { "Secret": "...", "ExpiryMinutes": 30 }`), C#'ta buna karşılık gelen bir sınıfa **otomatik eşliyoruz**:
+```csharp
+public class JwtOptionsExample
+{
+    public string Secret { get; set; } = "";
+    public int ExpiryMinutes { get; set; }
+}
+```
+Sonra herhangi bir servis, constructor'ında `IOptions<JwtOptionsExample>` isteyebiliyor — DI (Kavram 8) container, bu ayarları otomatik doldurup veriyor.
+
+### Örnek
+
+```csharp
+var configuration = new ConfigurationBuilder()
+    .AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Jwt:Secret"] = "sandbox-super-secret-key",
+        ["Jwt:ExpiryMinutes"] = "30"
+    })
+    .Build();
+
+var optionsServices = new ServiceCollection();
+optionsServices.Configure<JwtOptionsExample>(configuration.GetSection("Jwt"));
+var optionsProvider = optionsServices.BuildServiceProvider();
+
+var jwtOptions = optionsProvider.GetRequiredService<IOptions<JwtOptionsExample>>();
+Console.WriteLine($"Secret: {jwtOptions.Value.Secret}, ExpiryMinutes: {jwtOptions.Value.ExpiryMinutes}");
+```
+Çıktı: `Secret: sandbox-super-secret-key, ExpiryMinutes: 30`
+
+- `configuration.GetSection("Jwt")` — ayarların içindeki `"Jwt"` bölümünü seçiyoruz.
+- `services.Configure<JwtOptionsExample>(section)` — "bu bölümü, `JwtOptionsExample` sınıfına otomatik doldur" diyoruz.
+- `GetRequiredService<IOptions<JwtOptionsExample>>()` — dikkat, doğrudan `JwtOptionsExample`'ı istemiyoruz, onu bir **kutu** olan `IOptions<T>`'nin (Kavram 4: generic) içinde istiyoruz.
+
+### `.Value` unutulursa ne olur?
+
+**Bilerek `.Value` atlayıp direkt erişmeyi denedim:**
+```csharp
+Console.WriteLine($"Secret: {jwtOptions.Secret}");
+```
+Hata:
+```
+error CS1061: 'IOptions<JwtOptionsExample>' bir 'Secret' tanımı içermiyor...
+```
+`IOptions<T>`, `T`'nin kendisi **değil** — `T`'yi içinde tutan bir kutu. Gerçek nesneye ulaşmak için her zaman `.Value` yazman gerekiyor:
+```csharp
+Console.WriteLine($"Secret: {jwtOptions.Value.Secret}, ExpiryMinutes: {jwtOptions.Value.ExpiryMinutes}");
+```
+
+### FitForge'da nerede göreceğiz?
+
+Day 7'de `JwtOptions` sınıfını `Infrastructure`'da tanımlayıp, `JwtTokenGenerator`'ın constructor'ında `IOptions<JwtOptions>` isteyeceğiz — token üretirken `options.Value.Secret` ile imzalama anahtarına erişeceğiz.
+
+---
+
+## Kavram 17 — Zincirleme Noktalar (`a.b.c` Ne Anlama Gelir?)
+
+### Neden öğrenmen lazım?
+
+`builder.Services.AddControllers()`, `builder.Configuration.GetSection("Jwt").Get<JwtOptions>()` gibi art arda nokta ile uzayan satırlar seni yorabilir. Ama bu satırlar, göründüğünden çok daha basit bir kuralın **tekrar tekrar** uygulanmasından ibaret.
+
+### En basit kural — iki tür nokta var
+
+- **Parantezsiz nokta** (`.Services`, `.Content`, `.Name`) → "bu kutunun içinde duran, hazır bir şeyi **çek çıkar**" (buna **property/özellik** deniyor).
+- **Parantezli nokta** (`.AddControllers()`, `.GetSection("Jwt")`) → "bu kutunun üstündeki bir **düğmeye bas**, bir işlem yaptır" (buna **method/metod** deniyor). Parantezin içindekiler, o düğmeye "girdi" olarak verdiğin bilgiler.
+
+**En önemli fark budur — parantez var mı yok mu, "çek çıkar" mı "düğmeye bas" mı olduğunu söyler.**
+
+### Asıl sır: Her `.` çağrısı, aslında iki satıra bölünebilir
+
+```csharp
+var step1 = exerciseBox.Content;   // Box'ın içinden Content'i çek -> bir Exercise nesnesi
+var step2 = step1.Name;             // O Exercise'in içinden Name'i çek -> bir string
+Console.WriteLine($"Adım adım: {step2}");
+```
+```csharp
+// AYNI ŞEY, tek satırda (chaining) - ara değişkenlere isim vermeden:
+Console.WriteLine($"Zincirlenmiş: {exerciseBox.Content.Name}");
+```
+Çıktı — **ikisi de birebir aynı**: `Push Up`.
+
+`exerciseBox.Content.Name` demek: "önce `exerciseBox`'ın içinden `Content`'i çek (bu bir `Exercise` nesnesi çıkar), sonra o `Exercise`'ın içinden `Name`'i çek." Tek satırda yazdığımızda, ara sonuca (`step1`) hiç isim vermiyoruz, direkt üzerine noktayla devam ediyoruz — **kod daha kısa ama işlem birebir aynı**.
+
+### Metod zinciri de aynı mantık — sadece "düğmeler" birbirine bağlanıyor
+
+```csharp
+var demoSection = configForChainDemo.GetSection("Demo");   // 1. adım: bir "bölüm" kutusu al
+var demoValue = demoSection.Value;                          // 2. adım: o kutunun içindeki değeri çek
+Console.WriteLine($"Adım adım (config): {demoValue}");
+```
+```csharp
+// AYNI ŞEY, zincirlenmiş:
+Console.WriteLine($"Zincirlenmiş (config): {configForChainDemo.GetSection("Demo").Value}");
+```
+Çıktı — ikisi de: `42`.
+
+`GetSection("Demo")` bir **metod** (parantezli, "Demo" bilgisini içeri veriyoruz) — çalıştırılınca bize **yeni bir kutu** (bir `IConfigurationSection`) veriyor. O kutunun da kendi `.Value` (parantezsiz) özelliği var — ona da erişebiliyoruz. Yani: "bir düğmeye bastım, bana yeni bir kutu verdi, o kutunun üstünde de bir pencere vardı, ona baktım."
+
+### Şimdi `builder.Services.AddControllers()`'ı tam çözelim
+
+- `builder` — elimizdeki ilk kutu (`WebApplicationBuilder`).
+- `.Services` (parantezsiz) — bu kutunun içinden "Services" penceresine bak, çıkan şey **başka bir kutu** (`IServiceCollection`, Kavram 8'deki "çekmece").
+- `.AddControllers()` (parantezli) — az önce çıkan o ikinci kutunun üstündeki "AddControllers" düğmesine bas.
+
+Yani üç ayrı satıra bölünse:
+```csharp
+var builder2 = WebApplication.CreateBuilder(args);
+var services = builder2.Services;
+services.AddControllers();
+```
+— tam olarak `builder.Services.AddControllers();` ile **aynı işi** yapar. Sadece kısa yazım tercih ediyoruz çünkü ara kutuya (`services`) başka hiçbir yerde ihtiyacımız yok.
+
+### FitForge'da nerede göreceğiz?
+
+Bu proje boyunca yazdığımız (ve yazacağımız) **her** `builder.X.Y(...)`, `services.A().B()` satırı bu tek kurala dayanıyor. Bir satırı çözemediğinde, onu zihninde (ya da kağıda) ayrı satırlara böl — her nokta bir "çek çıkar" ya da "düğmeye bas" adımı, o kadar.
+
+---
+
 ## Roadmap Analizi Sonucu
 
 40 günlük roadmap'in tamamını tarayan arka plan analizi tamamlandı. Sonuç: yukarıdaki 15 kavram (9. ve 11.'si tam da bu analiz sayesinde eklendi) sağlam bir temel, ama roadmap'in tamamı için toplamda **92 kavram** gerekiyor. Hepsini şimdi öğrenmek yerine, geri kalanların **roadmap'te ilgili güne geldiğimizde**, o günün kendi "kodlamadan önce kavramı öğret" adımında işlenmesine karar verdik — CLAUDE.md'nin "gereksiz teoriyle boğma" kuralına uygun.
@@ -1229,7 +1357,7 @@ Aşağıda, geri kalan kavramların roadmap'in hangi gününde gerekeceğinin ta
 | 4 | Guid, DateTime/DateOnly/TimeSpan, EF Core Fluent API, global query filters, data annotation attribute'ları |
 | 5 | try/catch & özel exception sınıfları (kısa), middleware pipeline, ProblemDetails — Day 5'in kendi anlatımında |
 | ~~6~~ | ~~ASP.NET Identity, IdentityResult, primary constructor, DTO deseni~~ — işlendi, bkz. `docs/daily-logs/day-06.md` |
-| 7 | JWT yapısı, Claims/ClaimsPrincipal, [Authorize], Options pattern, FluentValidation |
+| ~~7~~ | ~~JWT yapısı, Claims/ClaimsPrincipal, [Authorize], Options pattern, FluentValidation~~ — işlendi, bkz. `docs/daily-logs/day-07.md` |
 | 8 | Navigation property'ler, collection tipleri, Include()/eager loading, IQueryable vs IEnumerable, LINQ, güvenli rastgele üretim |
 | 9-10 | Enum'lar, rol/policy bazlı authorization |
 | 11-16 | Attribute routing, ActionResult, value object, EF Core seed data, projection/Select(), aggregate root, cascade delete |

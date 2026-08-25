@@ -1,5 +1,8 @@
+using FitForge.Application.Auth;
+using FitForge.Infrastructure.Authentication;
 using FitForge.Infrastructure.Identity;
 using FitForge.Infrastructure.Persistence;
+using FluentValidation;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -20,6 +23,11 @@ public static class DependencyInjection
         services.AddIdentity<ApplicationUser, IdentityRole>()
             .AddEntityFrameworkStores<FitForgeDbContext>()
             .AddDefaultTokenProviders();
+
+        services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
+        services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
+
+        services.AddValidatorsFromAssemblyContaining<LoginRequestValidator>();
 
         return services;
     }
